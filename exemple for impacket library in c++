@@ -1,0 +1,102 @@
+#include <iostream>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#pragma comment(lib, "ws2_32.lib")
+
+class MiniSMBClient {
+private:
+    SOCKET sock;
+    std::string targetIP;
+    int port;
+
+public:
+    MiniSMBClient(std::string ip, int p = 445) {
+        targetIP = ip;
+        port = p;
+        sock = INVALID_SOCKET;
+    }
+
+    bool connectToTarget() {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            std::cout << "[-] WSAStartup failed.\n";
+            return false;
+        }
+
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) {
+            std::cout << "[-] Socket creation failed.\n";
+            WSACleanup();
+            return false;
+        }
+
+        sockaddr_in serverAddr;
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons(port);
+        inet_pton(AF_INET, targetIP.c_str(), &serverAddr.sin_addr);
+
+        std::cout << "[*] Connecting to SMB port " << port << " on " << targetIP << "...\n";
+        
+        int result = connect(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+        if (result == SOCKET_ERROR) {
+            std::cout << "[-] Connection refused or target is offline.\n";
+            closesocket(sock);
+            WSACleanup();
+            return false;
+        }
+
+        std::cout << "[+] SUCCESS: Connected to target SMB service!\n";
+        return true;
+    }
+
+    bool sendNegotiatePacket() {
+        
+        char negotiatePacket[] = {
+            0x00, 0x00, 0x00, 0x85, 
+            0xff, 'S', 'M', 'B',    
+            0x72,                   
+            0x00, 0x00, 0x00, 0x00, 
+            0x18,                   
+            0x53, 0xc8              
+        };
+
+        int bytesSent = send(sock, negotiatePacket, sizeof(negotiatePacket), 0);
+        if (bytesSent == SOCKET_ERROR) {
+            std::cout << "[-] Failed to send SMB Negotiate packet.\n";
+            return false;
+        }
+
+        std::cout << "[+] SMB Negotiate packet sent successfully (" << bytesSent << " bytes).\n";
+        
+        char buffer[1024];
+        int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
+        if (bytesReceived > 0) {
+            std::cout << "[+] Received " << bytesReceived << " bytes response from target server!\n";
+        }
+
+        return true;
+    }
+
+    void disconnect() {
+        if (sock != INVALID_SOCKET) {
+            closesocket(sock);
+        }
+        WSACleanup();
+    }
+};
+
+int main() {
+    std::string ip;
+    std::cout << "Enter target IP for C++ SMB Tool: ";
+    std::cin >> ip;
+
+    MiniSMBClient smbClient(ip);
+
+    if (smbClient.connectToTarget()) {
+        smbClient.sendNegotiatePacket();
+        smbClient.disconnect();
+    }
+
+    return 0;
+}
